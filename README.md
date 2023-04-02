@@ -4,7 +4,7 @@
 
 ### what is cutoff?
 
-cutoff is a script/extension for the Automatic1111 webui that lets users limit the effect certain attributes have on specified subsets of the prompt. I.e. when the prompt is `"a cute girl, white shirt with green tie, red shoes, blue hair, yellow eyes, pink skirt"`, cutoff lets you specify that the word blue belongs to the hair and not the shoes, and green tot he tie and not the skirt, etc.
+[cutoff](https://github.com/hnmr293/sd-webui-cutoff) is a script/extension for the Automatic1111 webui that lets users limit the effect certain attributes have on specified subsets of the prompt. I.e. when the prompt is `"a cute girl, white shirt with green tie, red shoes, blue hair, yellow eyes, pink skirt"`, cutoff lets you specify that the word blue belongs to the hair and not the shoes, and green tot he tie and not the skirt, etc.
 
 ### how doe this work?
 
