@@ -63,6 +63,7 @@ class CLIPSetRegion:
             region_mask[r:r+region_length] = 1
         region_mask = region_mask.reshape(-1,clip.tokenizer.max_length-2)
         region_mask = np.pad(region_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
+        region_mask = region_mask.reshape(1, -1)
 
         #calc target mask
         targets = []
@@ -80,6 +81,7 @@ class CLIPSetRegion:
             targets_mask[t_start: t_end] = 1
         targets_mask = targets_mask.reshape(-1,clip.tokenizer.max_length-2)
         targets_mask = np.pad(targets_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
+        targets_mask = targets_mask.reshape(1,-1)
 
         #prepare output
         region_mask_list = clip_regions['regions'].copy()
