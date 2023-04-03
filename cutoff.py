@@ -50,46 +50,51 @@ class CLIPSetRegion:
 
     def add_clip_region(self, clip_regions, region_text, target_text, weight):
         clip = clip_regions["clip"]
-        region_tokens = clip.tokenizer.tokenizer(region_text)['input_ids'][1:-1]
-        prompt_tokens = np.array([[y[0] for y in x]for x in clip_regions["base_tokens"]])
-        prompt_tokens = prompt_tokens[:,1:-1].reshape(-1)
+        region_outputs = []
+        target_outputs = []
+        for rt in region_text.split('\n'):
+            region_tokens = clip.tokenizer.tokenizer(rt)['input_ids'][1:-1]
+            prompt_tokens = np.array([[y[0] for y in x]for x in clip_regions["base_tokens"]])
+            prompt_tokens = prompt_tokens[:,1:-1].reshape(-1)
 
-        #calc region mask
-        region_length = len(region_tokens)
-        regions = get_sublists(list(prompt_tokens), region_tokens)
+            #calc region mask
+            region_length = len(region_tokens)
+            regions = get_sublists(list(prompt_tokens), region_tokens)
 
-        region_mask = np.zeros(len(prompt_tokens))
-        for r in regions:
-            region_mask[r:r+region_length] = 1
-        region_mask = region_mask.reshape(-1,clip.tokenizer.max_length-2)
-        region_mask = np.pad(region_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
-        region_mask = region_mask.reshape(1, -1)
+            region_mask = np.zeros(len(prompt_tokens))
+            for r in regions:
+                region_mask[r:r+region_length] = 1
+            region_mask = region_mask.reshape(-1,clip.tokenizer.max_length-2)
+            region_mask = np.pad(region_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
+            region_mask = region_mask.reshape(1, -1)
+            region_outputs.append(region_mask)
 
-        #calc target mask
-        targets = []
-        for target in target_text.split(" "):
-            # deal with underscores
-            target = re.sub(r"(?<!\\)_", " ", target)
-            target = re.sub(r"\\_", "_", target)
+            #calc target mask
+            targets = []
+            for target in target_text.split(" "):
+                # deal with underscores
+                target = re.sub(r"(?<!\\)_", " ", target)
+                target = re.sub(r"\\_", "_", target)
 
-            target_tokens = clip.tokenizer.tokenizer(target)['input_ids'][1:-1]
-            targets.extend([(x, len(target_tokens)) for x in get_sublists(region_tokens, target_tokens)])
-        targets = [(t_start + r, t_start + t_end + r) for r in regions for t_start, t_end in targets]
+                target_tokens = clip.tokenizer.tokenizer(target)['input_ids'][1:-1]
+                targets.extend([(x, len(target_tokens)) for x in get_sublists(region_tokens, target_tokens)])
+            targets = [(t_start + r, t_start + t_end + r) for r in regions for t_start, t_end in targets]
 
-        targets_mask = np.zeros(len(prompt_tokens))
-        for t_start, t_end in targets:
-            targets_mask[t_start: t_end] = 1
-        targets_mask = targets_mask.reshape(-1,clip.tokenizer.max_length-2)
-        targets_mask = np.pad(targets_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
-        targets_mask = targets_mask.reshape(1,-1)
+            targets_mask = np.zeros(len(prompt_tokens))
+            for t_start, t_end in targets:
+                targets_mask[t_start: t_end] = 1
+            targets_mask = targets_mask.reshape(-1,clip.tokenizer.max_length-2)
+            targets_mask = np.pad(targets_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
+            targets_mask = targets_mask.reshape(1,-1)
+            target_outputs.append(targets_mask)
 
         #prepare output
         region_mask_list = clip_regions['regions'].copy()
-        region_mask_list.append(region_mask)
+        region_mask_list.extend(region_outputs)
         target_mask_list = clip_regions['targets'].copy()
-        target_mask_list.append(targets_mask)
+        target_mask_list.extend(target_outputs)
         weight_list = clip_regions['weights'].copy()
-        weight_list.append(weight)
+        weight_list.extend([weight]*len(region_outputs))
 
         return ({
             "clip" : clip,
