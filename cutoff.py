@@ -9,6 +9,41 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
 
+def replace_embeddings(max_token, prompt, replacements=None):
+    
+    if replacements is None:
+        emb_lookup = []
+    else:
+        emb_lookup = replacements.copy()
+        max_token += len(emb_lookup)
+
+    def get_replacement(embedding):
+        for e, n in emb_lookup:
+            if torch.equal(embedding, e):
+                return n
+        return None
+    
+    tokens = []
+    for x in prompt:
+        row = []
+        for i in range(len(x)):
+            emb = x[i][0]
+            if not torch.is_tensor(emb):
+                row.append(emb)
+            else:
+                n = get_replacement(emb)
+                if n is not None:
+                    row.append(n)
+                else:
+                    max_token += 1
+                    row.append(max_token)
+                    emb_lookup.append((emb,max_token))
+        tokens.append(row)
+    tokens = np.array(tokens)[:,1:-1].reshape(-1)    
+    return (tokens, emb_lookup)
+
+def unpad_prompt(end_token, prompt):
+    return np.trim_zeros(prompt-end_token)+end_token
 
 class CLIPRegionsBasePrompt:
     @classmethod
@@ -52,10 +87,13 @@ class CLIPSetRegion:
         clip = clip_regions["clip"]
         region_outputs = []
         target_outputs = []
+
+        prompt_tokens, emb_lookup = replace_embeddings(clip.tokenizer.end_token, clip_regions["base_tokens"])
+        
         for rt in region_text.split('\n'):
-            region_tokens = clip.tokenizer.tokenizer(rt)['input_ids'][1:-1]
-            prompt_tokens = np.array([[y[0] for y in x]for x in clip_regions["base_tokens"]])
-            prompt_tokens = prompt_tokens[:,1:-1].reshape(-1)
+            region_tokens = clip.tokenizer.tokenize_with_weights(rt)
+            region_tokens, _ = replace_embeddings(clip.tokenizer.end_token, region_tokens, emb_lookup)
+            region_tokens = unpad_prompt(clip.tokenizer.end_token, region_tokens).tolist()
 
             #calc region mask
             region_length = len(region_tokens)
@@ -76,7 +114,10 @@ class CLIPSetRegion:
                 target = re.sub(r"(?<!\\)_", " ", target)
                 target = re.sub(r"\\_", "_", target)
 
-                target_tokens = clip.tokenizer.tokenizer(target)['input_ids'][1:-1]
+                target_tokens = clip.tokenizer.tokenize_with_weights(target)
+                target_tokens, _ = replace_embeddings(clip.tokenizer.end_token, target_tokens, emb_lookup)
+                target_tokens = unpad_prompt(clip.tokenizer.end_token, target_tokens).tolist()
+
                 targets.extend([(x, len(target_tokens)) for x in get_sublists(region_tokens, target_tokens)])
             targets = [(t_start + r, t_start + t_end + r) for r in regions for t_start, t_end in targets]
 

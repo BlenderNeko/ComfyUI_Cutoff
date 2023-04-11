@@ -6,7 +6,7 @@
 
 [cutoff](https://github.com/hnmr293/sd-webui-cutoff) is a script/extension for the Automatic1111 webui that lets users limit the effect certain attributes have on specified subsets of the prompt. I.e. when the prompt is `a cute girl, white shirt with green tie, red shoes, blue hair, yellow eyes, pink skirt`, cutoff lets you specify that the word blue belongs to the hair and not the shoes, and green tot he tie and not the skirt, etc. This is an implementation of cutoff in the form of 3 nodes that can be used in [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 
-### how doe this work?
+### how does this work?
 
 When you provide stable diffusion with some text, that text gets tokenized and CLIP creates a vector (embedding) for each token in the text. So if we have a prompt containing "blue hair, yellow eyes" some of the vectors coming out of CLIP will correspond to the "blue hair" part, and some to the "yellow eyes". When CLIP does this it tries to take the context of the entire sentence into consideration. Unfortunately CLIP isn't always as great at figuring out that the "blue" in "blue hair" should really only modify the noun "hair" and not the noun "eyes" a bit further in the sentence.
 
@@ -19,7 +19,7 @@ To achieve all of this, the following 3 nodes are introduced:
 
 **CLIPSetRegion:** this node sets a "region" of influence for specific target words, and comes with the following inputs:
 - region\_text: defines the set of tokens that the target words should affect, this should be a part of the original prompt. It is possible to define multiple regions in a single CLIPSetRegion node by stating every region on a new line.
-- target\_text: defines the set of tokens that will be masked off (i.e. the tokens we wish to limit to the region) this is a space separated list of words. If you want to match a sequence of words use underscores instead of spaces, e.g. "a\_series\_of\_connected\_tokens". If you want to match a word that actually contains underscores escape the underscore, e.g. "the\\_target\\_tokens"
+- target\_text: defines the set of tokens that will be masked off (i.e. the tokens we wish to limit to the region) this is a space separated list of words. If you want to match a sequence of words use underscores instead of spaces, e.g. "a\_series\_of\_connected\_tokens". If you want to match a word that actually contains underscores escape the underscore, e.g. "the\\_target\\_tokens". You can target textual inversion embeddings using the default syntax but do note that any underscores in the name of the embedding have to be escaped in this input field.
 - weight: how far to travel in the direction of the isolated vector 
 
 **CLIPRegionToConditioning:** this node converts the base prompt and regions into an actual conditioning to be used in the rest of ComfyUI, and comes with the following inputs:
