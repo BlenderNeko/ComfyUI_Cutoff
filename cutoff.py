@@ -88,6 +88,10 @@ class CLIPSetRegion:
         region_outputs = []
         target_outputs = []
 
+        #strip input strings
+        region_text = region_text.strip()
+        target_text = target_text.strip()
+
         prompt_tokens, emb_lookup = replace_embeddings(clip.tokenizer.end_token, clip_regions["base_tokens"])
         
         for rt in region_text.split('\n'):
