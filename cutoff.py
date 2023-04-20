@@ -1,13 +1,13 @@
 import torch
-import os
-import sys
 import copy
 import re
 import warnings
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
+from .adv_encode import advanced_encode_from_tokens
+
+#sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
 
 def replace_embeddings(max_token, prompt, replacements=None):
     
@@ -55,7 +55,7 @@ class CLIPRegionsBasePrompt:
     CATEGORY = "conditioning/cutoff"
 
     def init_prompt(self, clip, text):
-        tokens = clip.tokenizer.tokenize_with_weights(text)
+        tokens = clip.tokenize(text, return_word_ids=True)
         return ({
             "clip" : clip,
             "base_tokens" : tokens,
@@ -149,24 +149,55 @@ class CLIPSetRegion:
             "weights" : weight_list,
         },)
 
-def weighted_tokens_to_embedding(clip, tokens):
-    if clip.layer_idx is not None:
-        clip.cond_stage_model.clip_layer(clip.layer_idx)
-    try:
-        clip.patcher.patch_model()
-        emb = clip.cond_stage_model.encode_token_weights(tokens)
-        clip.patcher.unpatch_model()
-    except Exception as e:
-        clip.patcher.unpatch_model()
-        raise e
-    return emb
-
 def create_masked_prompt(weighted_tokens, mask, mask_token):
     mask_ids = list(zip(*np.nonzero(mask)))  
     new_prompt = copy.deepcopy(weighted_tokens)
     for x,y in mask_ids:
-        new_prompt[x][y] = (mask_token, new_prompt[x][y][1])
+        new_prompt[x][y] = (mask_token,) + new_prompt[x][y][1:]
     return new_prompt
+
+
+def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_masked, token_normalization='none', weight_interpretation='comfy'):
+    clip = clip_regions["clip"]
+    base_weighted_tokens = clip_regions["base_tokens"]
+    if mask_token == "":
+        mask_token = clip.tokenizer.end_token
+    else:
+        mask_token = clip.tokenizer.tokenizer(mask_token)['input_ids'][1:-1]
+        if len(mask_token) > 1:
+            warnings.warn("mask_token does not map to a single token, using the first token instead")
+        mask_token = mask_token[0]
+        
+    #calc global target mask
+    global_target_mask = np.any(np.stack(clip_regions["targets"]), axis=0).astype(int)
+
+    #calc global region mask
+    global_region_mask = np.any(np.stack(clip_regions["regions"]), axis=0).astype(float)
+    regions_sum = np.sum(np.stack(clip_regions["regions"]), axis=0)
+    regions_normalized = np.divide(1, regions_sum, out=np.zeros_like(regions_sum), where=regions_sum!=0)
+
+    #calc base embedding
+    base_embedding_full = advanced_encode_from_tokens(clip, base_weighted_tokens, token_normalization, weight_interpretation)
+    base_embedding_masked = advanced_encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask, mask_token), token_normalization, weight_interpretation)
+    base_embedding_start = base_embedding_full * (1-start_from_masked) + base_embedding_masked * start_from_masked
+    base_embedding_outer = base_embedding_full * (1-strict_mask) + base_embedding_masked * strict_mask
+
+    region_embeddings = []
+    for region, target, weight in zip (clip_regions["regions"],clip_regions["targets"],clip_regions["weights"]):
+        region_masking = torch.tensor(regions_normalized * region * weight, dtype=base_embedding_full.dtype, device=base_embedding_full.device).unsqueeze(-1)
+
+        region_emb = advanced_encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask - target, mask_token), token_normalization, weight_interpretation)
+        region_emb -= base_embedding_start
+        region_emb *= region_masking
+
+        region_embeddings.append(region_emb)
+    region_embeddings = torch.stack(region_embeddings).sum(axis=0)
+
+    embeddings_final_mask = torch.tensor(global_region_mask, dtype=base_embedding_full.dtype, device=base_embedding_full.device).unsqueeze(-1)
+    embeddings_final = base_embedding_start * embeddings_final_mask + base_embedding_outer * (1 - embeddings_final_mask)
+    embeddings_final += region_embeddings
+    return ([[embeddings_final, {}]], )
+
 
 class CLIPRegionsToConditioning:
     @classmethod
@@ -176,53 +207,42 @@ class CLIPRegionsToConditioning:
                              "strict_mask": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
                              "start_from_masked": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05})}}
     RETURN_TYPES = ("CONDITIONING",)
-    FUNCTION = "finalize_clip_regions"
+    FUNCTION = "finalize"
 
     CATEGORY = "conditioning/cutoff"
 
-    def finalize_clip_regions(self, clip_regions, mask_token, strict_mask, start_from_masked):
-        clip = clip_regions["clip"]
-        base_weighted_tokens = clip_regions["base_tokens"]
-        if mask_token == "":
-            mask_token = clip.tokenizer.end_token
-        else:
-            mask_token = clip.tokenizer.tokenizer(mask_token)['input_ids'][1:-1]
-            if len(mask_token) > 1:
-                warnings.warn("mask_token does not map to a single token, using the first token instead")
-            mask_token = mask_token[0]
-            
-        #calc global target mask
-        global_target_mask = np.any(np.stack(clip_regions["targets"]), axis=0).astype(int)
+    def finalize(self, clip_regions, mask_token, strict_mask, start_from_masked):
+        return finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_masked)
 
-        #calc global region mask
-        global_region_mask = np.any(np.stack(clip_regions["regions"]), axis=0).astype(float)
-        regions_sum = np.sum(np.stack(clip_regions["regions"]), axis=0)
-        regions_normalized = np.divide(1, regions_sum, out=np.zeros_like(regions_sum), where=regions_sum!=0)
+class CLIPRegionsToConditioningADV:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {"clip_regions": ("CLIPREGION", ),
+                             "mask_token": ("STRING", {"multiline": False, "default" : ""}),
+                             "strict_mask": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                             "start_from_masked": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                             "token_normalization": (["none", "mean", "length", "length+mean"],),
+                             "weight_interpretation": (["comfy", "A1111", "compel", "comfy++"],),
+                             }}
+    RETURN_TYPES = ("CONDITIONING",)
+    FUNCTION = "finalize"
 
-        #calc base embedding
-        base_embedding_full = weighted_tokens_to_embedding(clip, base_weighted_tokens)
-        base_embedding_masked = weighted_tokens_to_embedding(clip, create_masked_prompt(base_weighted_tokens, global_target_mask, mask_token))
-        base_embedding_start = base_embedding_full * (1-start_from_masked) + base_embedding_masked * start_from_masked
-        base_embedding_outer = base_embedding_full * (1-strict_mask) + base_embedding_masked * strict_mask
+    CATEGORY = "conditioning/cutoff"
 
-        region_embeddings = []
-        for region, target, weight in zip (clip_regions["regions"],clip_regions["targets"],clip_regions["weights"]):
-            region_masking = torch.tensor(regions_normalized * region * weight, dtype=base_embedding_full.dtype, device=base_embedding_full.device).unsqueeze(-1)
+    def finalize(self, clip_regions, mask_token, strict_mask, start_from_masked, token_normalization, weight_interpretation):
+        return finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_masked, token_normalization, weight_interpretation)
 
-            region_emb = weighted_tokens_to_embedding(clip, create_masked_prompt(base_weighted_tokens, global_target_mask - target, mask_token))
-            region_emb -= base_embedding_start
-            region_emb *= region_masking
-
-            region_embeddings.append(region_emb)
-        region_embeddings = torch.stack(region_embeddings).sum(axis=0)
-
-        embeddings_final_mask = torch.tensor(global_region_mask, dtype=base_embedding_full.dtype, device=base_embedding_full.device).unsqueeze(-1)
-        embeddings_final = base_embedding_start * embeddings_final_mask + base_embedding_outer * (1 - embeddings_final_mask)
-        embeddings_final += region_embeddings
-        return ([[embeddings_final, {}]], )
     
 NODE_CLASS_MAPPINGS = {
     "CLIPRegionsBasePrompt": CLIPRegionsBasePrompt,
     "CLIPSetRegion": CLIPSetRegion,
     "CLIPRegionsToConditioning": CLIPRegionsToConditioning,
+    "CLIPRegionsToConditioningADV": CLIPRegionsToConditioningADV,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "CLIPRegionsBasePrompt": "Cutoff BasePrompt",
+    "CLIPSetRegion": "Cutoff Set Region",
+    "CLIPRegionsToConditioning": "Cutoff Regions To Conditioning",
+    "CLIPRegionsToConditioningADV": "Cutoff Regions To Conditioning (ADV)",
 }
