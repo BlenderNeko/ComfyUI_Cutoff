@@ -234,15 +234,15 @@ class CLIPRegionsToConditioningADV:
 
     
 NODE_CLASS_MAPPINGS = {
-    "CLIPRegionsBasePrompt": CLIPRegionsBasePrompt,
-    "CLIPSetRegion": CLIPSetRegion,
-    "CLIPRegionsToConditioning": CLIPRegionsToConditioning,
-    "CLIPRegionsToConditioningADV": CLIPRegionsToConditioningADV,
+    "BNK_CutoffBasePrompt": CLIPRegionsBasePrompt,
+    "BNK_CutoffSetRegions": CLIPSetRegion,
+    "BNK_CutoffRegionsToConditioning": CLIPRegionsToConditioning,
+    "BNK_CutoffRegionsToConditioning_ADV": CLIPRegionsToConditioningADV,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CLIPRegionsBasePrompt": "Cutoff BasePrompt",
-    "CLIPSetRegion": "Cutoff Set Region",
-    "CLIPRegionsToConditioning": "Cutoff Regions To Conditioning",
-    "CLIPRegionsToConditioningADV": "Cutoff Regions To Conditioning (ADV)",
+    "BNK_CutoffBasePrompt": "Cutoff Base Prompt",
+    "BNK_CutoffSetRegions": "Cutoff Set Regions",
+    "BNK_CutoffRegionsToConditioning": "Cutoff Regions To Conditioning",
+    "BNK_CutoffRegionsToConditioning_ADV": "Cutoff Regions To Conditioning (ADV)",
 }
