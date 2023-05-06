@@ -150,7 +150,7 @@ class CLIPSetRegion:
         },)
 
 def create_masked_prompt(weighted_tokens, mask, mask_token):
-    mask_ids = list(zip(*np.nonzero(mask)))  
+    mask_ids = list(zip(*np.nonzero(mask.reshape((len(weighted_tokens), -1)))))  
     new_prompt = copy.deepcopy(weighted_tokens)
     for x,y in mask_ids:
         new_prompt[x][y] = (mask_token,) + new_prompt[x][y][1:]
