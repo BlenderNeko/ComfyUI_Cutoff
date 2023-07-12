@@ -5,7 +5,8 @@ import warnings
 
 import numpy as np
 
-from .adv_encode import advanced_encode_from_tokens
+from .adv_encode import advanced_encode_from_tokens, encode_token_weights_g, encode_token_weights_l, encode_token_weights, prepareXL
+from comfy.sdxl_clip import SDXLClipModel
 
 #sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
 
@@ -43,7 +44,8 @@ def replace_embeddings(max_token, prompt, replacements=None):
     return (tokens, emb_lookup)
 
 def unpad_prompt(end_token, prompt):
-    return np.trim_zeros(prompt-end_token)+end_token
+    res = np.trim_zeros(prompt, 'b')
+    return np.trim_zeros(res-end_token, 'b')+end_token
 
 class CLIPRegionsBasePrompt:
     @classmethod
@@ -85,6 +87,12 @@ class CLIPSetRegion:
 
     def add_clip_region(self, clip_regions, region_text, target_text, weight):
         clip = clip_regions["clip"]
+        tokenizer = clip.tokenizer
+        base_tokens = clip_regions["base_tokens"]
+        if isinstance(base_tokens, dict):
+            base_tokens = base_tokens['g']
+        if hasattr(tokenizer, 'clip_g'):
+            tokenizer = tokenizer.clip_g
         region_outputs = []
         target_outputs = []
 
@@ -92,12 +100,15 @@ class CLIPSetRegion:
         region_text = region_text.strip()
         target_text = target_text.strip()
 
-        prompt_tokens, emb_lookup = replace_embeddings(clip.tokenizer.end_token, clip_regions["base_tokens"])
+        
+        endtoken = tokenizer.end_token
+
+        prompt_tokens, emb_lookup = replace_embeddings(endtoken, base_tokens)
         
         for rt in region_text.split('\n'):
-            region_tokens = clip.tokenizer.tokenize_with_weights(rt)
-            region_tokens, _ = replace_embeddings(clip.tokenizer.end_token, region_tokens, emb_lookup)
-            region_tokens = unpad_prompt(clip.tokenizer.end_token, region_tokens).tolist()
+            region_tokens = tokenizer.tokenize_with_weights(rt)
+            region_tokens, _ = replace_embeddings(endtoken, region_tokens, emb_lookup)
+            region_tokens = unpad_prompt(endtoken, region_tokens).tolist()
 
             #calc region mask
             region_length = len(region_tokens)
@@ -106,7 +117,7 @@ class CLIPSetRegion:
             region_mask = np.zeros(len(prompt_tokens))
             for r in regions:
                 region_mask[r:r+region_length] = 1
-            region_mask = region_mask.reshape(-1,clip.tokenizer.max_length-2)
+            region_mask = region_mask.reshape(-1,tokenizer.max_length-2)
             region_mask = np.pad(region_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
             region_mask = region_mask.reshape(1, -1)
             region_outputs.append(region_mask)
@@ -118,9 +129,9 @@ class CLIPSetRegion:
                 target = re.sub(r"(?<!\\)_", " ", target)
                 target = re.sub(r"\\_", "_", target)
 
-                target_tokens = clip.tokenizer.tokenize_with_weights(target)
-                target_tokens, _ = replace_embeddings(clip.tokenizer.end_token, target_tokens, emb_lookup)
-                target_tokens = unpad_prompt(clip.tokenizer.end_token, target_tokens).tolist()
+                target_tokens = tokenizer.tokenize_with_weights(target)
+                target_tokens, _ = replace_embeddings(endtoken, target_tokens, emb_lookup)
+                target_tokens = unpad_prompt(endtoken, target_tokens).tolist()
 
                 targets.extend([(x, len(target_tokens)) for x in get_sublists(region_tokens, target_tokens)])
             targets = [(t_start + r, t_start + t_end + r) for r in regions for t_start, t_end in targets]
@@ -128,7 +139,7 @@ class CLIPSetRegion:
             targets_mask = np.zeros(len(prompt_tokens))
             for t_start, t_end in targets:
                 targets_mask[t_start: t_end] = 1
-            targets_mask = targets_mask.reshape(-1,clip.tokenizer.max_length-2)
+            targets_mask = targets_mask.reshape(-1,tokenizer.max_length-2)
             targets_mask = np.pad(targets_mask, pad_width=((0,0),(1,1)), mode='constant', constant_values=0)
             targets_mask = targets_mask.reshape(1,-1)
             target_outputs.append(targets_mask)
@@ -148,22 +159,63 @@ class CLIPSetRegion:
             "targets" : target_mask_list,
             "weights" : weight_list,
         },)
-
 def create_masked_prompt(weighted_tokens, mask, mask_token):
+    if isinstance(weighted_tokens, dict):
+        result = dict()
+        for k in weighted_tokens.keys():
+            result[k] = _create_masked_prompt(weighted_tokens[k], mask, mask_token)
+        return result
+    else:
+        return _create_masked_prompt(weighted_tokens, mask, mask_token)
+
+def _create_masked_prompt(weighted_tokens, mask, mask_token):
     mask_ids = list(zip(*np.nonzero(mask.reshape((len(weighted_tokens), -1)))))  
     new_prompt = copy.deepcopy(weighted_tokens)
     for x,y in mask_ids:
         new_prompt[x][y] = (mask_token,) + new_prompt[x][y][1:]
     return new_prompt
 
+def encode_from_tokens(clip, tokenized, token_normalization, weight_interpretation, return_pooled=False):
+    if isinstance(tokenized, dict):
+        embs_l = None
+        embs_g = None
+        pooled = None
+        if 'l' in tokenized and isinstance(clip.cond_stage_model, SDXLClipModel):
+            embs_l, _ = advanced_encode_from_tokens(tokenized['l'], 
+                                                 token_normalization, 
+                                                 weight_interpretation, 
+                                                 lambda x: encode_token_weights(clip, x, encode_token_weights_l),
+                                                 w_max=1.0, 
+                                                 return_pooled=False)
+        if 'g' in tokenized:
+            embs_g, pooled = advanced_encode_from_tokens(tokenized['g'], 
+                                                         token_normalization, 
+                                                         weight_interpretation,
+                                                         lambda x: encode_token_weights(clip, x, encode_token_weights_g),
+                                                         w_max=1.0, 
+                                                         return_pooled=True)
+        emb, pool = prepareXL(embs_l, embs_g, pooled, .5)
+    else:
+        emb, pool = advanced_encode_from_tokens(tokenized, 
+                                           token_normalization, 
+                                           weight_interpretation, 
+                                           lambda x: (clip.encode_from_tokens(x), None),
+                                           w_max=1.0)
+    if return_pooled:
+        return emb, pool
+    else:
+        return emb
 
 def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_masked, token_normalization='none', weight_interpretation='comfy'):
     clip = clip_regions["clip"]
+    tokenizer = clip.tokenizer    
+    if hasattr(tokenizer, 'clip_g'):
+        tokenizer = tokenizer.clip_g
     base_weighted_tokens = clip_regions["base_tokens"]
     if mask_token == "":
-        mask_token = clip.tokenizer.end_token
+        mask_token = 266#clip.tokenizer.end_token
     else:
-        mask_token = clip.tokenizer.tokenizer(mask_token)['input_ids'][1:-1]
+        mask_token = tokenizer.tokenizer(mask_token)['input_ids'][1:-1]
         if len(mask_token) > 1:
             warnings.warn("mask_token does not map to a single token, using the first token instead")
         mask_token = mask_token[0]
@@ -177,8 +229,8 @@ def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_mask
     regions_normalized = np.divide(1, regions_sum, out=np.zeros_like(regions_sum), where=regions_sum!=0)
 
     #calc base embedding
-    base_embedding_full = advanced_encode_from_tokens(clip, base_weighted_tokens, token_normalization, weight_interpretation)
-    base_embedding_masked = advanced_encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask, mask_token), token_normalization, weight_interpretation)
+    base_embedding_full, pool = encode_from_tokens(clip, base_weighted_tokens, token_normalization, weight_interpretation, True)
+    base_embedding_masked = encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask, mask_token), token_normalization, weight_interpretation)
     base_embedding_start = base_embedding_full * (1-start_from_masked) + base_embedding_masked * start_from_masked
     base_embedding_outer = base_embedding_full * (1-strict_mask) + base_embedding_masked * strict_mask
 
@@ -186,7 +238,7 @@ def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_mask
     for region, target, weight in zip (clip_regions["regions"],clip_regions["targets"],clip_regions["weights"]):
         region_masking = torch.tensor(regions_normalized * region * weight, dtype=base_embedding_full.dtype, device=base_embedding_full.device).unsqueeze(-1)
 
-        region_emb = advanced_encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask - target, mask_token), token_normalization, weight_interpretation)
+        region_emb = encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask - target, mask_token), token_normalization, weight_interpretation)
         region_emb -= base_embedding_start
         region_emb *= region_masking
 
@@ -196,7 +248,7 @@ def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_mask
     embeddings_final_mask = torch.tensor(global_region_mask, dtype=base_embedding_full.dtype, device=base_embedding_full.device).unsqueeze(-1)
     embeddings_final = base_embedding_start * embeddings_final_mask + base_embedding_outer * (1 - embeddings_final_mask)
     embeddings_final += region_embeddings
-    return ([[embeddings_final, {}]], )
+    return ([[embeddings_final, {"pooled_output": pool}]], )
 
 
 class CLIPRegionsToConditioning:
