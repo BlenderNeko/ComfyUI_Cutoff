@@ -31,6 +31,10 @@ To achieve all of this, the following 4 nodes are introduced:
 
 You can find these nodes under `conditioning>cutoff`
 
+### SDXL
+
+The nodes won't throw any errors when used with SDXL, but at least for 0.9 I didn't found it to be working that well.
+
 Finally, Here are some example images that you can load into ComfyUI:
 
 ![first example generation of a cute girl, white shirt with green tie, red shoes, blue hair, yellow eyes, pink skirt using cutoff](https://github.com/BlenderNeko/ComfyUI_Cutoff/blob/master/examples/ComfyUI_00671_.png)
