@@ -212,6 +212,14 @@ def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_mask
     if hasattr(tokenizer, 'clip_g'):
         tokenizer = tokenizer.clip_g
     base_weighted_tokens = clip_regions["base_tokens"]
+
+    #calc base embedding
+    base_embedding_full, pool = encode_from_tokens(clip, base_weighted_tokens, token_normalization, weight_interpretation, True)
+
+    # Avoid numpy value error and passthrough base embeddings if no regions are set.
+    if len(clip_regions["regions"]) == 0:
+        return ([[base_embedding_full, {"pooled_output": pool}]], )
+
     if mask_token == "":
         mask_token = 266#clip.tokenizer.end_token
     else:
@@ -228,8 +236,7 @@ def finalize_clip_regions(clip_regions, mask_token, strict_mask, start_from_mask
     regions_sum = np.sum(np.stack(clip_regions["regions"]), axis=0)
     regions_normalized = np.divide(1, regions_sum, out=np.zeros_like(regions_sum), where=regions_sum!=0)
 
-    #calc base embedding
-    base_embedding_full, pool = encode_from_tokens(clip, base_weighted_tokens, token_normalization, weight_interpretation, True)
+    #mask base embeddings
     base_embedding_masked = encode_from_tokens(clip, create_masked_prompt(base_weighted_tokens, global_target_mask, mask_token), token_normalization, weight_interpretation)
     base_embedding_start = base_embedding_full * (1-start_from_masked) + base_embedding_masked * start_from_masked
     base_embedding_outer = base_embedding_full * (1-strict_mask) + base_embedding_masked * strict_mask
