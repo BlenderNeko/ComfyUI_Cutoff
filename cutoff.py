@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 
 from .adv_encode import advanced_encode_from_tokens, encode_token_weights_g, encode_token_weights_l, encode_token_weights, prepareXL
-from comfy.sdxl_clip import SDXLClipModel
+from comfy.sdxl_clip import SDXLClipModel, SDXLRefinerClipModel, SDXLClipG
 
 #sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
 
@@ -89,10 +89,18 @@ class CLIPSetRegion:
         clip = clip_regions["clip"]
         tokenizer = clip.tokenizer
         base_tokens = clip_regions["base_tokens"]
-        if isinstance(base_tokens, dict):
+        if 'g' in base_tokens:
             base_tokens = base_tokens['g']
+        elif 'l' in base_tokens:
+            base_tokens = base_tokens['l']
+        else:
+            raise Exception("No recognized tokenizer")
         if hasattr(tokenizer, 'clip_g'):
             tokenizer = tokenizer.clip_g
+        elif hasattr(tokenizer, 'clip_l'):
+            tokenizer = tokenizer.clip_l
+        else:
+            raise Exception("No recognized tokenizer")
         region_outputs = []
         target_outputs = []
 
@@ -176,7 +184,7 @@ def _create_masked_prompt(weighted_tokens, mask, mask_token):
     return new_prompt
 
 def encode_from_tokens(clip, tokenized, token_normalization, weight_interpretation, return_pooled=False):
-    if isinstance(tokenized, dict):
+    if isinstance(clip.cond_stage_model, (SDXLClipModel, SDXLRefinerClipModel, SDXLClipG)):
         embs_l = None
         embs_g = None
         pooled = None
@@ -196,10 +204,10 @@ def encode_from_tokens(clip, tokenized, token_normalization, weight_interpretati
                                                          return_pooled=True)
         emb, pool = prepareXL(embs_l, embs_g, pooled, .5)
     else:
-        emb, pool = advanced_encode_from_tokens(tokenized, 
+        emb, pool = advanced_encode_from_tokens(tokenized['l'], 
                                            token_normalization, 
                                            weight_interpretation, 
-                                           lambda x: (clip.encode_from_tokens(x), None),
+                                           lambda x: (clip.encode_from_tokens({'l': x}), None),
                                            w_max=1.0)
     if return_pooled:
         return emb, pool
