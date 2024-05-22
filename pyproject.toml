@@ -1,0 +1,14 @@
+[project]
+name = "comfyui_cutoff"
+description = "These custom nodes provides features that allow for better control over the effects of the text prompt."
+version = "1.0.0"
+license = "LICENSE"
+
+[project.urls]
+Repository = "https://github.com/BlenderNeko/ComfyUI_Cutoff"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI_Cutoff"
+Icon = ""
